@@ -167,7 +167,7 @@ etf_daily_returns %>%
 
 In some cases, we may want to impute missing values (i.e., replace `NA` with an actual value). This also allows us to impute more granular data, like hourly stock prices.
 
-Let's start with the daily closing prices for SPY:
+Let's start with the daily adjusted closing prices for SPY:
 
 ```{r}
 spy_prices <- 
@@ -176,7 +176,7 @@ spy_prices <-
 spy_prices
 
 spy_prices %>% 
-  plot_time_series(date, close, .interactive = FALSE)
+  plot_time_series(date, adjusted, .interactive = FALSE)
 ```
 
 
@@ -186,7 +186,7 @@ Now let's impute hourly closing prices for every day of the year using `ts_imput
 spy_prices_hourly <- 
   spy_prices %>% 
   pad_by_time(date, .by = "hour") %>% # pad with additional observations for every hour
-  mutate_at(vars(close), .funs = ts_impute_vec, period = 1)
+  mutate(adjusted = ts_impute_vec(adjusted, period = 1))
 
 spy_prices_hourly
 ```
@@ -199,9 +199,9 @@ Rolling functions are also useful for working with time series data. For example
 ```{r}
 roll_avg <- slidify(.f = AVERAGE, .period = 7, .align = "center", .partial = TRUE)
 
-portfolio_returns %>% 
-  mutate(rolling_avg = roll_avg(returns)) %>%
-  pivot_longer(cols = c(returns, rolling_avg)) %>% 
+spy_prices %>% 
+  mutate(rolling_avg = roll_avg(adjusted)) %>%
+  pivot_longer(cols = c(adjusted, rolling_avg)) %>% 
   plot_time_series(date, value, .color_var = name, .smooth = FALSE, .plotly_slider = TRUE)
 ```
 
