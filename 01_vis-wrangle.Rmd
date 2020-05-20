@@ -1,0 +1,208 @@
+---
+title: "Visualizing and data wrangling with the `timetk` package for R"
+output:
+  html_notebook:
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup}
+library(tidyverse)
+library(tidymodels)
+library(tidyquant)
+
+# remotes::install_github("business-science/timetk")
+library(timetk)
+```
+
+## Loading Stock Data with `tidyquant`
+
+For our data, we'll create a portfolio of 5 ETFs: SPY, EFA, IJS, EEM, and AGG.
+
+First, we'll load the data from Yahoo Finance using `tq_get()` and will calculate daily returns using `tq_transmute()`. 
+
+```{r data}
+# The symbols vector holds our tickers. 
+symbols <- c("SPY","EFA", "IJS", "EEM","AGG")
+
+etf_daily_returns <- 
+  symbols %>% 
+  tq_get(get = "stock.prices", from = "2004-01-01") %>% 
+  group_by(symbol) %>% 
+  tq_transmute(adjusted, periodReturn, period = "daily", col_rename = "returns")
+```
+
+
+Next, we'll build a portfolio with the following weights:
+
+* SPY: 25%
+* EFA 25%
+* IJS 25%
+* EEM 20%
+* AGG 5%
+
+```{r Aggressive Portfolio}
+w_agg <- c(0.25, 0.25, 0.25, 0.20, 0.05)
+
+portfolio_returns <- 
+  etf_daily_returns %>% 
+  tq_portfolio(assets_col = symbol, 
+               returns_col = returns, 
+               weights = w_agg,
+               col_rename = "returns")
+```
+
+
+
+## Visualize Time Series Data
+
+We can create a nice looking plot of our time series data with a single line of code.
+
+```{r}
+portfolio_returns %>%
+  plot_time_series(date, returns, .color_var = year(date),
+                   .interactive = FALSE, .color_lab = "Year")
+```
+
+We can even make this plot interactive using `timetk`'s integration with `plotly`:
+
+```{r}
+portfolio_returns %>%
+  plot_time_series(date, returns, .color_var = year(date),
+                   .interactive = TRUE, .plotly_slider = TRUE, .color_lab = "Year")
+```
+
+
+`timetk` will automatically facet plots with grouped dta:
+
+```{r}
+etf_daily_returns %>% 
+  group_by(symbol) %>% 
+  plot_time_series(date, returns, .facet_ncol = 2, .color_var = symbol, .interactive = FALSE)
+```
+
+
+`timetk` also has a built-in function for [plotting anomaly diagnostics](https://business-science.github.io/timetk/reference/plot_anomaly_diagnostics.html):
+
+```{r}
+portfolio_returns %>% 
+  plot_anomaly_diagnostics(date, returns)
+```
+
+
+To adjust outlier detection, change the `alpha` parameter.
+
+Anomaly detection is done by the `tk_anomaly_diagnostics` function:
+
+```{r}
+portfolio_returns %>% 
+  tk_anomaly_diagnostics(date, returns)
+```
+
+
+### Shiny with `timetk`
+
+We can use these visualization tools to easily build a simple [**Shiny application**](https://nrohr.shinyapps.io/timetk-app/) that helps us diagnose time series data.
+
+
+## Data Wrangling
+
+### Summarizing and filtering by time
+
+`timetk` also includes some functions that work like common `dplyr` verbs, but are especially useful when working with time series data.
+
+Let's look at our individual ETFs to apply some of the data wrangling tools from `timetk`.
+
+```{r}
+etf_daily_returns %>% 
+  group_by(symbol) %>% 
+  plot_time_series(date, returns, .facet_ncol = 2, .interactive = FALSE)
+```
+
+
+We can use `summarise_by_time()` to aggregate over a specific time period. For example, let's smooth our returns by averaging them over each month:
+
+```{r}
+etf_daily_returns %>% 
+  summarise_by_time(
+    date, .by = "month",
+    returns = AVERAGE(returns)
+  ) %>% 
+  plot_time_series(date, returns, .facet_ncol = 2, .interactive = FALSE)
+```
+
+
+We can also filter by time range using the `filter_by_time()` function:
+
+```{r}
+etf_daily_returns %>% 
+  filter_by_time(date, "2012-06", "2020") %>% 
+  summarise_by_time(
+    date, .by = "month",
+    returns = AVERAGE(returns)
+  ) %>% 
+  plot_time_series(date, returns, .facet_ncol = 2, .interactive = FALSE)
+```
+
+
+### Padding and imputing missing data
+
+`timetk` also has functions for padding and imputing missing data.
+
+Our tibbles of data are missing some dates - weekends and holidays. In our ETF returns:
+
+```{r}
+etf_daily_returns
+```
+
+Some packages for working with time series data require there to be no missing entries. Luckily, `timetk` makes it easy to add placeholders for any msising dates in our data.
+
+The `pad_by_time()` function will replace missing values with `NA` by default.
+
+```{r}
+etf_daily_returns %>% 
+  pad_by_time(date, .by = "auto")
+```
+
+
+In some cases, we may want to impute missing values (i.e., replace `NA` with an actual value). This also allows us to impute more granular data, like hourly stock prices.
+
+Let's start with the daily closing prices for SPY:
+
+```{r}
+spy_prices <- 
+  tq_get("SPY", get = "stock.prices", from = "2004-01-01") 
+
+spy_prices
+
+spy_prices %>% 
+  plot_time_series(date, close, .interactive = FALSE)
+```
+
+
+Now let's impute hourly closing prices for every day of the year using `ts_impute_vec()`. (This is done linearly when `period = 1`)
+
+```{r}
+spy_prices_hourly <- 
+  spy_prices %>% 
+  pad_by_time(date, .by = "hour") %>% # pad with additional observations for every hour
+  mutate_at(vars(close), .funs = ts_impute_vec, period = 1)
+
+spy_prices_hourly
+```
+
+
+### Sliding / rolling calculations
+
+Rolling functions are also useful for working with time series data. For example, we might want to calculate a rolling average of our daily portfolio returns. This can be done using the `slidify()` function:
+
+```{r}
+roll_avg <- slidify(.f = AVERAGE, .period = 7, .align = "center", .partial = TRUE)
+
+portfolio_returns %>% 
+  mutate(rolling_avg = roll_avg(returns)) %>%
+  pivot_longer(cols = c(returns, rolling_avg)) %>% 
+  plot_time_series(date, value, .color_var = name, .smooth = FALSE, .plotly_slider = TRUE)
+```
+
+
