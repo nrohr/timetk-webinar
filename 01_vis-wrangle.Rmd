@@ -73,7 +73,7 @@ portfolio_returns %>%
 ```
 
 
-`timetk` will automatically facet plots with grouped dta:
+`timetk` will automatically facet plots with grouped data:
 
 ```{r}
 etf_daily_returns %>% 
